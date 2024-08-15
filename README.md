@@ -6,11 +6,12 @@ Research a cohort of AI/ML techniques to accurately cateogorize medical R&D lite
 2. Random Forest
 3. SVMs
 4. Neural Networks
+5. XGBoost
 
 # Findings
 ## TODO
 
 # Usage
 ```terminal
-python -m pip install pandas numpy scikit-learn tensorflow requests
+python -m pip install pandas numpy scikit-learn tensorflow requests xgboost
 ```
