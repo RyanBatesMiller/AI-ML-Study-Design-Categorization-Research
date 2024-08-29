@@ -6,11 +6,13 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import GridSearchCV
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
+import xgboost as xgb
 
 CATEGORIES = {"RCT meta-analysis": "pool individual randomized controlled trials (RCTs) together to arrive at an overall estimate of the effect of the intervention under consideration", 
               "Systematic Review": "summary of research results (evidence) that uses explicit and reproducible methods to systematically search, critically appraise, and synthesize on a specific issue", 
@@ -77,6 +79,7 @@ def ml_classify(dataframe, type):
     y = dataframe['Study Design']
 
     # Convert labels to numerical values
+    print("encoding data...")
     label_encoder = LabelEncoder()
     y = label_encoder.fit_transform(y)
 
@@ -84,29 +87,68 @@ def ml_classify(dataframe, type):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     # Create a TF-IDF vectorizer to convert abstracts into numerical features
+    print("vectoring data...")
     vectorizer = TfidfVectorizer()
     X_train = vectorizer.fit_transform(X_train)
     X_test = vectorizer.transform(X_test)
 
+    # Define the parameter grid for GridSearchCV
+    param_grid = {}
+
     # Create a Random Forest classifier
-    if type == 2:
-        clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    if type == "rf":
+        print("initializing random forest...")
+        clf = RandomForestClassifier(random_state=42)
+        param_grid = {
+            'n_estimators': [100, 200, 300],
+            'max_depth': [None, 5, 10],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4],
+            'max_features': ['auto', 'sqrt', 'log2']
+        }
     
     # Create a Support Vector Machine classifier
-    elif type == 3:
-        clf = SVC(kernel='rbf', random_state=42)
+    elif type == "svm":
+        print("initializing svm")
+        clf = SVC(random_state=42)
+        param_grid = {
+            'C': [0.1, 1, 10],
+            'gamma': ['scale', 'auto'],
+            'kernel': ['linear', 'rbf', 'poly']
+        }
 
-    # Train the classifier
-    clf.fit(X_train, y_train)
+    # Create a XGBoost Classifier
+    elif type == "xgb":
+        print("initializing xgb...")
+        clf = xgb.XGBClassifier()
+        param_grid = {
+            'max_depth': [3, 5, 7],
+            'learning_rate': [0.1, 0.01],
+            'n_estimators': [100, 200, 300],
+            'subsample': [0.8, 1.0]
+        }
 
-    # Make predictions on the test set
-    y_pred = clf.predict(X_test)
+    else:
+        raise ValueError("'type' must be 'rf', 'svm', or 'xgb'.")
+
+    # Create GridSearchCV with the classifier and parameter grid
+    grid_search = GridSearchCV(clf, param_grid, scoring='accuracy', cv=5)
+
+    # Train the classifier using GridSearchCV
+    print("searching for optimal parameters...")
+    grid_search.fit(X_train, y_train)
+
+    # Get the best classifier and its predictions on the test set
+    print("predicting labels...")
+    best_classifier = grid_search.best_estimator_
+    y_pred = best_classifier.predict(X_test)
 
     # Convert numerical predictions back to original labels
     y_pred_labels = label_encoder.inverse_transform(y_pred)
     y_test_labels = label_encoder.inverse_transform(y_test)
 
     # Evaluate the classifier
+    print("generating report...")
     print(classification_report(y_test_labels, y_pred_labels))
     print(accuracy_score(y_test_labels, y_pred_labels))
 
@@ -125,12 +167,13 @@ def get_vox_category(abstract, SEARCH_URL, token):
         Provide the category as a JSON with a single key spelled exactly: 'category', and no premable, explanation, or definition. \n
         Here is the abstract: \n\n {abstract} \n\n
         Here are the categories: {categories} \n
+        DONT FORGET TO HAVE THE KEY 'category' !!
         """
         url = f"{SEARCH_URL}/chatCompletion"
         payload = json.dumps({
             "messages": [{"role": "user", "content": query}],
             "engine": "gpt-35-turbo",
-            "max_tokens": "1400",
+            "max_tokens": "100",
             "temperature": 0
         })
         headers = {
@@ -143,7 +186,15 @@ def get_vox_category(abstract, SEARCH_URL, token):
     except Exception as e:
         print("VOX Categorization error: ", e)
         print("Retrying...")
-        return get_vox_category(abstract, SEARCH_URL, token)
+        with open("credentials.json", "r") as file:
+            credentials = json.load(file)
+
+        # Get the username and password from the credentials -- SECRET
+        CLIENT_ID = credentials.get("username")
+        CLIENT_SECRET = credentials.get("password")
+        PINGFEDERATE_URL = credentials.get("pingfederate_url")
+        api_token = federate_auth(CLIENT_ID, CLIENT_SECRET, PINGFEDERATE_URL)
+        return get_vox_category(abstract, SEARCH_URL, api_token)
     
     return str(category)
 
@@ -188,8 +239,9 @@ def main():
     print("2: Randon Forest")
     print("3: SVMs")
     print("4: Neural Networks")
+    print("5: XGBoost")
     selection = input("Make selection: ")
-    if selection not in ["1", "2", "3", "4"]:
+    if selection not in ["1", "2", "3", "4", "5"]:
         print("Must be number from 1-5!")
         main()
 
@@ -223,13 +275,23 @@ def main():
         dataset_df.to_excel(data_file_path)
         print("Labels added to", data_file_path)
 
-    # Random Forest classification (ensemble DT) & SVM
-    if selection == 2 or 3:
-        ml_classify(dataset_df, selection)
+    # Random Forest classification (ensemble DT)
+    if selection == 2:
+        ml_classify(dataset_df, "rf")
+
+    # SVM classification
+    if selection == 3:
+        ml_classify(dataset_df, "svm")
 
     # Neural Network
     if selection == 4:
         nn_classify(dataset_df)
+
+    # XGBoost classification
+    if selection == 5:
+        ml_classify(dataset_df, "xgb")
+
+    
 
     main()
 
