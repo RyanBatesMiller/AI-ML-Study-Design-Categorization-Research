@@ -13,5 +13,5 @@ Research a cohort of AI/ML techniques to accurately cateogorize medical R&D lite
 
 # Usage
 ```terminal
-python -m pip install pandas numpy scikit-learn tensorflow requests xgboost
+python -m pip install pandas numpy scikit-learn tensorflow requests xgboost openpyxl
 ```
