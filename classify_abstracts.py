@@ -7,9 +7,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import GridSearchCV
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.utils import to_categorical
+from sklearn.utils.class_weight import compute_class_weight
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
+from keras.utils import to_categorical
+from keras.regularizers import l2
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 import xgboost as xgb
@@ -43,6 +45,10 @@ def nn_classify(dataframe):
 
     # Split the data into train and test sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Compute class weights based on the class distribution
+    class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+    class_weights_dict = dict(enumerate(class_weights))
 
     # Create a TF-IDF vectorizer to convert abstracts into numerical features
     vectorizer = TfidfVectorizer()
@@ -54,17 +60,24 @@ def nn_classify(dataframe):
     y_train = to_categorical(y_train, num_classes)
     y_test = to_categorical(y_test, num_classes)
 
-    # Create a neural network model, use relu activation
+    # Create a neural network model
     model = Sequential()
-    model.add(Dense(64, activation='relu', input_shape=(X_train.shape[1],)))
-    model.add(Dense(32, activation='relu'))
-    model.add(Dense(num_classes, activation='softmax'))
+    # First hidden layer with 128 units, ReLU activation, and L2 regularization
+    model.add(Dense(128, activation='relu', input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.001)))
+    model.add(Dropout(0.3))  # Dropout to prevent overfitting
+    
+    # Second hidden layer with 64 units
+    model.add(Dense(64, activation='relu'))
+    model.add(Dropout(0.3))  # Dropout to prevent overfitting
+    
+    # Output layer with 14 units (since you have 14 labels)
+    model.add(Dense(14, activation='softmax'))
 
     # Compile the model
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
     # Train the model
-    model.fit(X_train, y_train, epochs=10, batch_size=32, verbose=1)
+    model.fit(X_train, y_train, epochs=10, batch_size=16, verbose=1, class_weight=class_weights_dict)
 
     # Evaluate the model
     y_pred = np.argmax(model.predict(X_test), axis=-1)
@@ -109,7 +122,7 @@ def ml_classify(dataframe, type):
     
     # Create a Support Vector Machine classifier
     elif type == "svm":
-        print("initializing svm")
+        print("initializing svm...")
         clf = SVC(random_state=42)
         param_grid = {
             'C': [0.1, 1, 10],
@@ -256,7 +269,8 @@ def main():
             try:
                 dataset_df = pd.read_excel(data_file_path)
                 break
-            except:
+            except Exception as e:
+                print(e)
                 print("###Error: Incorrect master format! Please be sure master excel sheet is NOT open and correctly spelled!")
 
     # VOX (LLM) clasification
